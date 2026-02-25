@@ -1183,7 +1183,74 @@ void ArenaCameraNode::setupInitialCameraInfo(sensor_msgs::CameraInfo& cam_info_m
 bool ArenaCameraNode::setROI(const sensor_msgs::RegionOfInterest target_roi, sensor_msgs::RegionOfInterest& reached_roi)
 {
   boost::lock_guard<boost::recursive_mutex> lock(grab_mutex_);
-  // TODO: set ROI
+  try
+  {
+    GenApi::INodeMap* pNodeMap = pDevice_->GetNodeMap();
+
+    // Check if AutoExposureAOI is supported
+    GenApi::CBooleanPtr pAeAoiEnable = pNodeMap->GetNode("AutoExposureAOIEnable");
+    if (!pAeAoiEnable || !GenApi::IsWritable(pAeAoiEnable))
+    {
+      ROS_ERROR_STREAM("AutoExposureAOIEnable is not available or not writable on this camera");
+      return false;
+    }
+
+    // All zeros = disable AE AOI (use full image for auto-exposure)
+    if (target_roi.width == 0 && target_roi.height == 0 &&
+        target_roi.x_offset == 0 && target_roi.y_offset == 0)
+    {
+      pAeAoiEnable->SetValue(false);
+      reached_roi.width = 0;
+      reached_roi.height = 0;
+      reached_roi.x_offset = 0;
+      reached_roi.y_offset = 0;
+      ROS_INFO_STREAM("AutoExposure AOI disabled, using full image for metering");
+      return true;
+    }
+
+    // Enable AE AOI
+    pAeAoiEnable->SetValue(true);
+
+    // Helper lambda for setting integer nodes with clamping
+    auto setIntNode = [&](const char* nodeName, int64_t targetVal) -> int64_t {
+      GenApi::CIntegerPtr pNode = pNodeMap->GetNode(nodeName);
+      if (!pNode || !GenApi::IsWritable(pNode))
+      {
+        ROS_WARN_STREAM(nodeName << " is not available or not writable");
+        return 0;
+      }
+      int64_t val = targetVal;
+      if (val < pNode->GetMin())
+      {
+        ROS_WARN_STREAM("Desired " << nodeName << " (" << val
+                        << ") unreachable! Setting to lower limit: " << pNode->GetMin());
+        val = pNode->GetMin();
+      }
+      else if (val > pNode->GetMax())
+      {
+        ROS_WARN_STREAM("Desired " << nodeName << " (" << val
+                        << ") unreachable! Setting to upper limit: " << pNode->GetMax());
+        val = pNode->GetMax();
+      }
+      pNode->SetValue(val);
+      return pNode->GetValue();
+    };
+
+    // Set width/height first (valid offset ranges depend on these)
+    reached_roi.width = setIntNode("AutoExposureAOIWidth", target_roi.width);
+    reached_roi.height = setIntNode("AutoExposureAOIHeight", target_roi.height);
+    reached_roi.x_offset = setIntNode("AutoExposureAOIOffsetX", target_roi.x_offset);
+    reached_roi.y_offset = setIntNode("AutoExposureAOIOffsetY", target_roi.y_offset);
+
+    ROS_INFO_STREAM("AutoExposure AOI set to: offset=(" << reached_roi.x_offset << ", "
+                    << reached_roi.y_offset << ") size=(" << reached_roi.width << "x"
+                    << reached_roi.height << ")");
+  }
+  catch (const GenICam::GenericException& e)
+  {
+    ROS_ERROR_STREAM("An exception while setting AutoExposure AOI: " << e.GetDescription());
+    return false;
+  }
   return true;
 }
 
