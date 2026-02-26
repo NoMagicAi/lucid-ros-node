@@ -65,6 +65,12 @@ ArenaCameraParameter::ArenaCameraParameter()
   , brightness_continuous_(false)
   , exposure_auto_(true)
   , gain_auto_(true)
+  , target_brightness_aoi_(128)
+  , target_brightness_aoi_given_(false)
+  , exposure_auto_algorithm_("Mean")
+  , exposure_auto_algorithm_given_(false)
+  , exposure_auto_damping_(50.0)
+  , exposure_auto_damping_given_(false)
   ,
   // #########################
   exposure_search_timeout_(5.)
@@ -332,7 +338,32 @@ void ArenaCameraParameter::readFromRosParameterServer(const ros::NodeHandle& nh)
     ROS_WARN_STREAM("gain_auto is ignored because gain is given.");
   }
 
-  
+
+  // ##########################
+  //  auto-exposure tuning settings
+  // ##########################
+
+  target_brightness_aoi_given_ = nh.hasParam("target_brightness");
+  if (target_brightness_aoi_given_)
+  {
+    nh.getParam("target_brightness", target_brightness_aoi_);
+    ROS_DEBUG_STREAM("target_brightness is given and has value " << target_brightness_aoi_);
+  }
+
+  exposure_auto_algorithm_given_ = nh.hasParam("exposure_auto_algorithm");
+  if (exposure_auto_algorithm_given_)
+  {
+    nh.getParam("exposure_auto_algorithm", exposure_auto_algorithm_);
+    ROS_DEBUG_STREAM("exposure_auto_algorithm is given and has value " << exposure_auto_algorithm_);
+  }
+
+  exposure_auto_damping_given_ = nh.hasParam("exposure_auto_damping");
+  if (exposure_auto_damping_given_)
+  {
+    nh.getParam("exposure_auto_damping", exposure_auto_damping_);
+    ROS_DEBUG_STREAM("exposure_auto_damping is given and has value " << exposure_auto_damping_);
+  }
+
   // ##########################
 
   nh.param<double>("exposure_search_timeout", exposure_search_timeout_, 5.);
@@ -423,6 +454,28 @@ void ArenaCameraParameter::validateParameterSet(const ros::NodeHandle& nh)
                     << "Brightness = " << brightness_ << ". Will reset it to "
                     << "default value!");
     brightness_given_ = false;
+  }
+
+  if (target_brightness_aoi_given_ && (target_brightness_aoi_ < 0 || target_brightness_aoi_ > 255))
+  {
+    ROS_WARN_STREAM("Desired target_brightness not in allowed range [0 - 255]! "
+                    << "target_brightness = " << target_brightness_aoi_ << ". Will reset it to "
+                    << "default value!");
+    target_brightness_aoi_given_ = false;
+  }
+
+  if (exposure_auto_algorithm_given_ && exposure_auto_algorithm_.empty())
+  {
+    ROS_WARN_STREAM("exposure_auto_algorithm is empty! Will not set it.");
+    exposure_auto_algorithm_given_ = false;
+  }
+
+  if (exposure_auto_damping_given_ && exposure_auto_damping_ < 0.0)
+  {
+    ROS_WARN_STREAM("Desired exposure_auto_damping is negative! "
+                    << "exposure_auto_damping = " << exposure_auto_damping_ << ". Will reset it to "
+                    << "default value!");
+    exposure_auto_damping_given_ = false;
   }
 
   if (exposure_search_timeout_ < 5.)

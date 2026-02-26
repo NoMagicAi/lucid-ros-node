@@ -226,6 +226,28 @@ public:
    */
   bool exposure_auto_;
   bool gain_auto_;
+
+  /**
+   * The target brightness for auto-exposure (GenICam TargetBrightness node).
+   * Range: 0-255, default 128.
+   */
+  int target_brightness_aoi_;
+  bool target_brightness_aoi_given_;
+
+  /**
+   * The auto-exposure algorithm (GenICam ExposureAutoAlgorithm node).
+   * Values: "Mean", "Median".
+   */
+  std::string exposure_auto_algorithm_;
+  bool exposure_auto_algorithm_given_;
+
+  /**
+   * The auto-exposure damping factor (GenICam ExposureAutoDamping node).
+   * A percentage controlling how quickly auto-exposure adapts.
+   */
+  double exposure_auto_damping_;
+  bool exposure_auto_damping_given_;
+
   // #######################################################################
 
   /**

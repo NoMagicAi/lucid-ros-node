@@ -71,6 +71,9 @@ ArenaCameraNode::ArenaCameraNode()
   , set_gamma_srv_(nh_.advertiseService("set_gamma", &ArenaCameraNode::setGammaCallback, this))
   , set_brightness_srv_(nh_.advertiseService("set_brightness", &ArenaCameraNode::setBrightnessCallback, this))
   , set_sleeping_srv_(nh_.advertiseService("set_sleeping", &ArenaCameraNode::setSleepingCallback, this))
+  , set_target_brightness_srv_(nh_.advertiseService("set_target_brightness", &ArenaCameraNode::setTargetBrightnessCallback, this))
+  , set_exposure_auto_algorithm_srv_(nh_.advertiseService("set_exposure_auto_algorithm", &ArenaCameraNode::setExposureAutoAlgorithmCallback, this))
+  , set_exposure_auto_damping_srv_(nh_.advertiseService("set_exposure_auto_damping", &ArenaCameraNode::setExposureAutoDampingCallback, this))
   , set_user_output_srvs_()
   // Arena
   , arena_camera_(nullptr)
@@ -524,6 +527,45 @@ bool ArenaCameraNode::startGrabbing()
       if (setGamma(arena_camera_parameter_set_.gamma_, reached_gamma))
       {
         ROS_INFO_STREAM("Setting gamma to " << arena_camera_parameter_set_.gamma_ << ", reached: " << reached_gamma);
+      }
+    }
+
+    //
+    // TARGET BRIGHTNESS (auto-exposure target)
+    //
+    if (arena_camera_parameter_set_.target_brightness_aoi_given_)
+    {
+      int reached_target_brightness;
+      if (setTargetBrightness(arena_camera_parameter_set_.target_brightness_aoi_, reached_target_brightness))
+      {
+        ROS_INFO_STREAM("Setting target_brightness to " << arena_camera_parameter_set_.target_brightness_aoi_
+                                                        << ", reached: " << reached_target_brightness);
+      }
+    }
+
+    //
+    // EXPOSURE AUTO ALGORITHM
+    //
+    if (arena_camera_parameter_set_.exposure_auto_algorithm_given_)
+    {
+      std::string reached_algorithm;
+      if (setExposureAutoAlgorithm(arena_camera_parameter_set_.exposure_auto_algorithm_, reached_algorithm))
+      {
+        ROS_INFO_STREAM("Setting exposure_auto_algorithm to " << arena_camera_parameter_set_.exposure_auto_algorithm_
+                                                              << ", reached: " << reached_algorithm);
+      }
+    }
+
+    //
+    // EXPOSURE AUTO DAMPING
+    //
+    if (arena_camera_parameter_set_.exposure_auto_damping_given_)
+    {
+      float reached_damping;
+      if (setExposureAutoDamping(arena_camera_parameter_set_.exposure_auto_damping_, reached_damping))
+      {
+        ROS_INFO_STREAM("Setting exposure_auto_damping to " << arena_camera_parameter_set_.exposure_auto_damping_
+                                                            << ", reached: " << reached_damping);
       }
     }
 
@@ -1690,6 +1732,136 @@ bool ArenaCameraNode::setGammaCallback(camera_control_msgs::SetGamma::Request& r
                                        camera_control_msgs::SetGamma::Response& res)
 {
   res.success = setGamma(req.target_gamma, res.reached_gamma);
+  return true;
+}
+
+bool ArenaCameraNode::setTargetBrightness(const int& target_brightness, int& reached_brightness)
+{
+  boost::lock_guard<boost::recursive_mutex> lock(grab_mutex_);
+  try
+  {
+    GenApi::CIntegerPtr pTargetBrightness = pDevice_->GetNodeMap()->GetNode("TargetBrightness");
+    if (!pTargetBrightness || !GenApi::IsWritable(pTargetBrightness))
+    {
+      ROS_ERROR_STREAM("TargetBrightness is not available or not writable on this camera");
+      return false;
+    }
+
+    int64_t val = target_brightness;
+    if (val < pTargetBrightness->GetMin())
+    {
+      ROS_WARN_STREAM("Desired TargetBrightness (" << val
+                      << ") unreachable! Setting to lower limit: " << pTargetBrightness->GetMin());
+      val = pTargetBrightness->GetMin();
+    }
+    else if (val > pTargetBrightness->GetMax())
+    {
+      ROS_WARN_STREAM("Desired TargetBrightness (" << val
+                      << ") unreachable! Setting to upper limit: " << pTargetBrightness->GetMax());
+      val = pTargetBrightness->GetMax();
+    }
+
+    pTargetBrightness->SetValue(val);
+    reached_brightness = static_cast<int>(pTargetBrightness->GetValue());
+  }
+  catch (const GenICam::GenericException& e)
+  {
+    ROS_ERROR_STREAM("An exception while setting TargetBrightness to " << target_brightness
+                                                                       << " occurred: " << e.GetDescription());
+    return false;
+  }
+  return true;
+}
+
+bool ArenaCameraNode::setTargetBrightnessCallback(camera_control_msgs::SetTargetBrightness::Request& req,
+                                                   camera_control_msgs::SetTargetBrightness::Response& res)
+{
+  res.success = setTargetBrightness(req.target_brightness_value, res.reached_brightness_value);
+  return true;
+}
+
+bool ArenaCameraNode::setExposureAutoAlgorithm(const std::string& target_algorithm, std::string& reached_algorithm)
+{
+  boost::lock_guard<boost::recursive_mutex> lock(grab_mutex_);
+  try
+  {
+    GenApi::CEnumerationPtr pExposureAutoAlgorithm = pDevice_->GetNodeMap()->GetNode("ExposureAutoAlgorithm");
+    if (!pExposureAutoAlgorithm || !GenApi::IsWritable(pExposureAutoAlgorithm))
+    {
+      ROS_ERROR_STREAM("ExposureAutoAlgorithm is not available or not writable on this camera");
+      return false;
+    }
+
+    GenApi::CEnumEntryPtr pEntry = pExposureAutoAlgorithm->GetEntryByName(GenICam::gcstring(target_algorithm.c_str()));
+    if (!pEntry || !GenApi::IsReadable(pEntry))
+    {
+      ROS_ERROR_STREAM("ExposureAutoAlgorithm value '" << target_algorithm
+                       << "' is not valid. Valid entries are listed in the camera documentation.");
+      return false;
+    }
+
+    Arena::SetNodeValue<GenICam::gcstring>(pDevice_->GetNodeMap(), "ExposureAutoAlgorithm",
+                                           GenICam::gcstring(target_algorithm.c_str()));
+    GenICam::gcstring current_val = Arena::GetNodeValue<GenICam::gcstring>(pDevice_->GetNodeMap(),
+                                                                           "ExposureAutoAlgorithm");
+    reached_algorithm = std::string(current_val.c_str());
+  }
+  catch (const GenICam::GenericException& e)
+  {
+    ROS_ERROR_STREAM("An exception while setting ExposureAutoAlgorithm to '" << target_algorithm
+                                                                              << "' occurred: " << e.GetDescription());
+    return false;
+  }
+  return true;
+}
+
+bool ArenaCameraNode::setExposureAutoAlgorithmCallback(camera_control_msgs::SetExposureAutoAlgorithm::Request& req,
+                                                        camera_control_msgs::SetExposureAutoAlgorithm::Response& res)
+{
+  res.success = setExposureAutoAlgorithm(req.target_algorithm, res.reached_algorithm);
+  return true;
+}
+
+bool ArenaCameraNode::setExposureAutoDamping(const float& target_damping, float& reached_damping)
+{
+  boost::lock_guard<boost::recursive_mutex> lock(grab_mutex_);
+  try
+  {
+    GenApi::CFloatPtr pDamping = pDevice_->GetNodeMap()->GetNode("ExposureAutoDamping");
+    if (!pDamping || !GenApi::IsWritable(pDamping))
+    {
+      ROS_ERROR_STREAM("ExposureAutoDamping is not available or not writable on this camera");
+      return false;
+    }
+
+    float damping_to_set = target_damping;
+    if (pDamping->GetMin() > damping_to_set)
+    {
+      damping_to_set = pDamping->GetMin();
+      ROS_WARN_STREAM("Desired ExposureAutoDamping unreachable! Setting to lower limit: " << damping_to_set);
+    }
+    else if (pDamping->GetMax() < damping_to_set)
+    {
+      damping_to_set = pDamping->GetMax();
+      ROS_WARN_STREAM("Desired ExposureAutoDamping unreachable! Setting to upper limit: " << damping_to_set);
+    }
+
+    pDamping->SetValue(damping_to_set);
+    reached_damping = static_cast<float>(pDamping->GetValue());
+  }
+  catch (const GenICam::GenericException& e)
+  {
+    ROS_ERROR_STREAM("An exception while setting ExposureAutoDamping to " << target_damping
+                                                                          << " occurred: " << e.GetDescription());
+    return false;
+  }
+  return true;
+}
+
+bool ArenaCameraNode::setExposureAutoDampingCallback(camera_control_msgs::SetExposureAutoDamping::Request& req,
+                                                      camera_control_msgs::SetExposureAutoDamping::Response& res)
+{
+  res.success = setExposureAutoDamping(req.target_damping, res.reached_damping);
   return true;
 }
 

@@ -1,0 +1,4 @@
+int32 target_brightness_value
+---
+int32 reached_brightness_value
+bool success

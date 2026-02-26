@@ -1,0 +1,4 @@
+float32 target_damping
+---
+float32 reached_damping
+bool success

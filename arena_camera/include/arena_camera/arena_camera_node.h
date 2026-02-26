@@ -52,6 +52,9 @@
 #include <camera_control_msgs/SetGamma.h>
 #include <camera_control_msgs/SetROI.h>
 #include <camera_control_msgs/SetSleeping.h>
+#include <camera_control_msgs/SetTargetBrightness.h>
+#include <camera_control_msgs/SetExposureAutoAlgorithm.h>
+#include <camera_control_msgs/SetExposureAutoDamping.h>
 #include <camera_control_msgs/GrabImagesAction.h>
  
 #include <actionlib/server/simple_action_server.h>
@@ -283,6 +286,21 @@ protected:
   bool setSleepingCallback(camera_control_msgs::SetSleeping::Request& req,
                            camera_control_msgs::SetSleeping::Response& res);
 
+  bool setTargetBrightness(const int& target_brightness, int& reached_brightness);
+
+  bool setTargetBrightnessCallback(camera_control_msgs::SetTargetBrightness::Request& req,
+                                   camera_control_msgs::SetTargetBrightness::Response& res);
+
+  bool setExposureAutoAlgorithm(const std::string& target_algorithm, std::string& reached_algorithm);
+
+  bool setExposureAutoAlgorithmCallback(camera_control_msgs::SetExposureAutoAlgorithm::Request& req,
+                                        camera_control_msgs::SetExposureAutoAlgorithm::Response& res);
+
+  bool setExposureAutoDamping(const float& target_damping, float& reached_damping);
+
+  bool setExposureAutoDampingCallback(camera_control_msgs::SetExposureAutoDamping::Request& req,
+                                      camera_control_msgs::SetExposureAutoDamping::Response& res);
+
   /**
   * Returns true if the camera was put into sleep mode
   * @return true if in sleep mode
@@ -363,6 +381,9 @@ protected:
   ros::ServiceServer set_gamma_srv_;
   ros::ServiceServer set_brightness_srv_;
   ros::ServiceServer set_sleeping_srv_;
+  ros::ServiceServer set_target_brightness_srv_;
+  ros::ServiceServer set_exposure_auto_algorithm_srv_;
+  ros::ServiceServer set_exposure_auto_damping_srv_;
   std::vector<ros::ServiceServer> set_user_output_srvs_;
 
   ArenaCamera* arena_camera_;
