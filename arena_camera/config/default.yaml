@@ -95,6 +95,15 @@ frame_rate: 5.0
 #  reached by adapting the gain.
 exposure_auto: true
 gain_auto: true
+
+#  Auto-exposure tuning settings (applied to camera firmware).
+#  These control how the camera's built-in auto-exposure algorithm behaves.
+#  target_brightness: Target brightness for auto-exposure metering (0-255).
+# target_brightness: 128
+#  exposure_auto_algorithm: Algorithm used by auto-exposure ("Mean" or "Median").
+# exposure_auto_algorithm: "Mean"
+#  exposure_auto_damping: How quickly auto-exposure adapts (percentage).
+# exposure_auto_damping: 50.0
 ##########################################################################
 
 #  The timeout while searching the exposure which is connected to the
