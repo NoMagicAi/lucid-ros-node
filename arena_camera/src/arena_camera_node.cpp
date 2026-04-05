@@ -31,6 +31,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -47,6 +48,9 @@
 #include <arena_camera/arena_camera_node.h>
 #include <arena_camera/encoding_conversions.h>
 
+// SHM ring buffer producer (GPU demosaic + shared memory)
+#include <arena_camera/shm_frame_producer.h>
+
 using diagnostic_msgs::DiagnosticStatus;
 
 namespace arena_camera
@@ -56,6 +60,9 @@ Arena::IDevice* pDevice_ = nullptr;
 Arena::IImage* pImage_ = nullptr;
 const uint8_t* pData_ = nullptr;
 GenApi::INodeMap* pNodeMap_ = nullptr;
+
+// SHM ring buffer producer (initialized if enable_shm_ringbuf param is true)
+std::unique_ptr<ShmFrameProducer> shm_producer_;
 
 using sensor_msgs::CameraInfo;
 using sensor_msgs::CameraInfoPtr;
@@ -657,6 +664,56 @@ bool ArenaCameraNode::startGrabbing()
                   << "shutter mode = " << arena_camera_parameter_set_.shutterModeString());
 
   pDevice_->RequeueBuffer(pImage_);
+
+  // Initialize SHM ring buffer producer if enabled
+  bool enable_shm_ringbuf = false;
+  nh_.param("enable_shm_ringbuf", enable_shm_ringbuf, false);
+  if (enable_shm_ringbuf)
+  {
+    std::string camera_name;
+    nh_.param<std::string>("camera_name", camera_name, nh_.getNamespace());
+    // Remove leading slash from namespace if used as camera name
+    if (!camera_name.empty() && camera_name[0] == '/')
+    {
+      camera_name = camera_name.substr(1);
+    }
+
+    // Determine Bayer pattern from current encoding
+    NppiBayerGridPosition bayer_pattern = NPPI_BAYER_RGGB;
+    std::string enc = currentROSEncoding();
+    if (enc == sensor_msgs::image_encodings::BAYER_RGGB8)
+      bayer_pattern = NPPI_BAYER_RGGB;
+    else if (enc == sensor_msgs::image_encodings::BAYER_BGGR8)
+      bayer_pattern = NPPI_BAYER_BGGR;
+    else if (enc == sensor_msgs::image_encodings::BAYER_GBRG8)
+      bayer_pattern = NPPI_BAYER_GBRG;
+    else if (enc == sensor_msgs::image_encodings::BAYER_GRBG8)
+      bayer_pattern = NPPI_BAYER_GRBG;
+    else
+    {
+      ROS_WARN_STREAM("SHM ring buffer: unsupported encoding '" << enc << "', disabling.");
+      enable_shm_ringbuf = false;
+    }
+
+    if (enable_shm_ringbuf)
+    {
+      shm_producer_ = std::make_unique<ShmFrameProducer>();
+      uint32_t num_slots = 16;
+      nh_.param("shm_ringbuf_num_slots", num_slots, static_cast<uint32_t>(16));
+      if (shm_producer_->init(camera_name, img_raw_msg_.width, img_raw_msg_.height, bayer_pattern, num_slots))
+      {
+        ROS_INFO_STREAM("SHM ring buffer producer initialized for camera '" << camera_name << "' ("
+                                                                            << img_raw_msg_.width << "x"
+                                                                            << img_raw_msg_.height << " " << enc << ")");
+      }
+      else
+      {
+        ROS_ERROR("Failed to initialize SHM ring buffer producer. Continuing without SHM.");
+        shm_producer_.reset();
+      }
+    }
+  }
+
   return true;
 }
 
@@ -739,15 +796,25 @@ void ArenaCameraNode::spin()
     return;
   }
 
-  if (!isSleeping() && (img_raw_pub_.getNumSubscribers() || getNumSubscribersRect()))
+  bool has_ros_subscribers = img_raw_pub_.getNumSubscribers() || getNumSubscribersRect();
+  bool has_shm_producer = shm_producer_ && shm_producer_->is_initialized();
+
+  if (!isSleeping() && (has_ros_subscribers || has_shm_producer))
   {
-    if (getNumSubscribersRaw() || getNumSubscribersRect())
+    if (has_ros_subscribers || has_shm_producer)
     {
       if (!grabImage())
       {
         ROS_INFO("did not get image");
         return;
       }
+    }
+
+    // Write to SHM ring buffer (GPU demosaic + shared memory)
+    if (has_shm_producer)
+    {
+      shm_producer_->write(img_raw_msg_.data.data(), img_raw_msg_.data.size(),
+                           img_raw_msg_.header.stamp.toNSec(), img_raw_msg_.header.seq);
     }
 
     if (img_raw_pub_.getNumSubscribers() > 0)

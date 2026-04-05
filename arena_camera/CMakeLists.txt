@@ -40,6 +40,11 @@ if (NOT ${arena_sdk_FOUND})
 endif()
 
 #
+# CUDA / NPP (for SHM ring buffer GPU demosaic)
+#
+find_package(CUDAToolkit QUIET)
+
+#
 # CATKIN
 #
 
@@ -167,10 +172,26 @@ add_executable(
 # needed ".h"s
 target_include_directories(
     ${arena_camera_node_name}
-        PRIVATE ${catkin_INCLUDE_DIRS} 
+        PRIVATE ${catkin_INCLUDE_DIRS}
         PRIVATE ${arena_sdk_INCLUDE_DIRS}
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+
+# SHM ring buffer header (path set by Docker build via SHM_RINGBUF_INCLUDE_DIR env var)
+if (DEFINED ENV{SHM_RINGBUF_INCLUDE_DIR})
+    target_include_directories(
+        ${arena_camera_node_name}
+            PRIVATE $ENV{SHM_RINGBUF_INCLUDE_DIR}
+    )
+endif()
+
+# CUDA/NPP includes (for SHM ring buffer GPU demosaic)
+if (CUDAToolkit_FOUND)
+    target_include_directories(
+        ${arena_camera_node_name}
+            PRIVATE ${CUDAToolkit_INCLUDE_DIRS}
+    )
+endif()
 
 # needed ".so"s
 target_link_libraries(
@@ -178,6 +199,18 @@ target_link_libraries(
         ${catkin_LIBRARIES}
         ${arena_sdk_LIBRARIES}
 )
+
+# CUDA/NPP libraries (for SHM ring buffer GPU demosaic)
+if (CUDAToolkit_FOUND)
+    target_link_libraries(
+        ${arena_camera_node_name}
+            CUDA::cudart
+            CUDA::nppc
+            CUDA::nppicc
+            CUDA::nppidei
+            rt
+    )
+endif()
 
 add_dependencies(
     ${arena_camera_node_name}
