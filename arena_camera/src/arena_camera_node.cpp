@@ -667,10 +667,11 @@ bool ArenaCameraNode::startGrabbing() {
 
     if (enable_shm_ringbuf) {
       shm_producer_ = std::make_unique<ShmFrameProducer>();
-      uint32_t num_slots = 16;
-      nh_.param("shm_ringbuf_num_slots", num_slots, static_cast<uint32_t>(16));
+      int num_slots = 16;
+      nh_.param("shm_ringbuf_num_slots", num_slots, 16);
       if (shm_producer_->init(camera_name, img_raw_msg_.width,
-                              img_raw_msg_.height, bayer_pattern, num_slots)) {
+                              img_raw_msg_.height, bayer_pattern,
+                              static_cast<uint32_t>(num_slots))) {
         ROS_INFO_STREAM("SHM ring buffer producer initialized for camera '"
                         << camera_name << "' (" << img_raw_msg_.width << "x"
                         << img_raw_msg_.height << " " << enc << ")");
