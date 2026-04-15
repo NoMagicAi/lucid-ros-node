@@ -90,11 +90,17 @@ public:
   virtual void spin();
 
   /**
+  * grab and publish one frame
+  */
+  virtual void spin_once();
+
+  /**
   * Getter for the frame rate set by the launch script or from the ros parameter
   * server
   * @return the desired frame rate.
   */
   const double& frameRate() const;
+  const ros::Time& lastImageStamp() const { return img_raw_msg_.header.stamp; }
 
   /**
   * Getter for the tf frame.
@@ -103,6 +109,12 @@ public:
   const std::string& cameraFrame() const;
 
 protected:
+  /**
+  * Take one NTP sample, store in circular buffer, update camera_clock_offset_ns_
+  * with the best (minimum roundtrip) sample in the buffer.
+  */
+  void syncCameraClockOffset();
+
   /**
   * Creates the camera instance and starts the services and action servers.
   * @return false if an error occurred
@@ -385,7 +397,19 @@ protected:
   std::array<float, 256> brightness_exp_lut_;
 
   bool is_sleeping_;
+  bool trigger_mode_enabled_;
+  ros::Time next_trigger_;
   boost::recursive_mutex grab_mutex_;
+  int64_t camera_clock_offset_ns_;
+
+  static constexpr int kClockSyncBufferSize = 32;
+  struct ClockSample {
+    int64_t offset_ns;
+    int64_t roundtrip_ns;
+    ros::Time sampled_at;
+  };
+  std::array<ClockSample, kClockSyncBufferSize> clock_samples_;
+  int clock_sample_idx_;
 
   /// diagnostics:
   diagnostic_updater::Updater diagnostics_updater_;

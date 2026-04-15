@@ -48,19 +48,13 @@ int main(int argc, char **argv)
 
   arena_camera::ArenaCameraNode arena_camera_node;
 
-  ros::Rate r(arena_camera_node.frameRate());
-
   ROS_INFO_STREAM("Start image grabbing if node connects to topic with "
                   << "a frame_rate of: " << arena_camera_node.frameRate() << " Hz");
 
   // Main thread and brightness-service thread
   boost::thread th(boost::bind(&ros::spin));
 
-  while (ros::ok())
-  {
-    arena_camera_node.spin();
-    r.sleep();
-  }
+  arena_camera_node.spin();
 
   ROS_INFO("Terminate ArenaCameraNode");
   return EXIT_SUCCESS;
