@@ -758,9 +758,9 @@ void ArenaCameraNode::syncCameraClockOffset()
 
   ros::Time current_time = ros::Time().fromNSec(t2);
   clock_samples_[clock_sample_idx_] = {
-    .offset_ns    = static_cast<int64_t>(t1 + (t2 - t1) / 2) - camera_time_ns,
-    .roundtrip_ns       = t2 - t1,
-    .sample_time  = current_time
+    .offset_ns = static_cast<int64_t>(t1 + (t2 - t1) / 2) - camera_time_ns,
+    .roundtrip_ns = t2 - t1,
+    .sample_time = current_time
 };
 
   const ClockSample* best = &clock_samples_[clock_sample_idx_]; // points to most recent sample
