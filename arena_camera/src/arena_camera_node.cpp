@@ -906,6 +906,8 @@ bool ArenaCameraNode::grabImage(uint64_t trigger_at_ns)
     img_raw_msg_.data.resize(img_raw_msg_.height * img_raw_msg_.step);
     memcpy(&img_raw_msg_.data[0], pImage_->GetData(), img_raw_msg_.height * img_raw_msg_.step);
 
+    // Convert the camera's hardware capture timestamp to ROS time by adding the
+    // estimated ROS-minus-camera clock offset (maintained by syncCameraClockOffset()).
     img_raw_msg_.header.stamp = ros::Time().fromNSec(pImage_->GetTimestampNs() + camera_clock_offset_ns_);
 
     pDevice_->RequeueBuffer(pImage_);
