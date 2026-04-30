@@ -85,9 +85,27 @@ public:
   void init();
 
   /**
-  * spin the node
+  * spin the node — dispatches to spin_triggered() or spin_freerunning()
   */
   virtual void spin();
+
+  /**
+  * grab and publish one frame.
+  * @param trigger_at_ns  if non-zero and in trigger mode, sleeps until this
+  *                       absolute time (ns) before firing TriggerSoftware.
+  *                       Zero means fire as soon as TriggerArmed.
+  */
+  virtual void spin_once(uint64_t trigger_at_ns = 0);
+
+  /**
+  * main loop in software-trigger mode: fires TriggerSoftware at precise integer-ns boundaries
+  */
+  virtual void spin_triggered();
+
+  /**
+  * main loop in free-running mode: lets the camera clock drive pacing via GetImage() blocking
+  */
+  virtual void spin_freerunning();
 
   /**
   * Getter for the frame rate set by the launch script or from the ros parameter
@@ -103,6 +121,12 @@ public:
   const std::string& cameraFrame() const;
 
 protected:
+  /**
+  * Take one NTP sample, store in circular buffer, update camera_clock_offset_ns_
+  * with the best (minimum roundtrip) {host_midpoint_time - camera_time} sample in the buffer.
+  */
+  void syncCameraClockOffset();
+
   /**
   * Creates the camera instance and starts the services and action servers.
   * @return false if an error occurred
@@ -143,7 +167,12 @@ protected:
   * Grabs an image and stores the image in img_raw_msg_
   * @return false if an error occurred.
   */
-  virtual bool grabImage();
+  /**
+  * @param trigger_at_ns  if non-zero and in trigger mode, sleeps until this
+  *                       absolute time (ns) before firing TriggerSoftware.
+  *                       Zero means fire as soon as TriggerArmed.
+  */
+  virtual bool grabImage(uint64_t trigger_at_ns = 0);
 
   /**
   * Fills the ros CameraInfo-Object with the image dimensions
@@ -385,7 +414,19 @@ protected:
   std::array<float, 256> brightness_exp_lut_;
 
   bool is_sleeping_;
+  bool trigger_mode_enabled_;
+  uint64_t next_trigger_ns_;
   boost::recursive_mutex grab_mutex_;
+  int64_t camera_clock_offset_ns_;
+
+  static constexpr size_t kClockSyncBufferSize = 32;
+  struct ClockSample {
+    int64_t offset_ns;
+    uint64_t roundtrip_ns;
+    ros::Time sample_time;
+  };
+  std::array<ClockSample, kClockSyncBufferSize> clock_samples_;
+  int clock_sample_idx_;
 
   /// diagnostics:
   diagnostic_updater::Updater diagnostics_updater_;

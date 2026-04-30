@@ -51,6 +51,15 @@ using diagnostic_msgs::DiagnosticStatus;
 
 namespace arena_camera
 {
+// Maximum frame rate in software-trigger mode before frames are likely dropped.
+// Above this rate the host cannot reliably trigger acquisition because the thread
+// is blocked for too long while waiting for fetching of the newest image to complete
+static constexpr double kMaxTriggerModeFrameRateHz = 20.0;
+
+// Discard clock-sync samples older than this; avoids using stale offsets after
+// a long idle period where the camera or host clock may have drifted significantly.
+static constexpr double kClockSyncMaxSampleAgeSeconds = 600.0;  // 10 minutes
+
 Arena::ISystem* pSystem_ = nullptr;
 Arena::IDevice* pDevice_ = nullptr;
 Arena::IImage* pImage_ = nullptr;
@@ -87,6 +96,10 @@ ArenaCameraNode::ArenaCameraNode()
   , sampling_indices_()
   , brightness_exp_lut_()
   , is_sleeping_(false)
+  , trigger_mode_enabled_(false)
+  , camera_clock_offset_ns_(0)
+  , clock_samples_()
+  , clock_sample_idx_(0)
 {
   diagnostics_updater_.setHardwareID("none");
   diagnostics_updater_.add("camera_availability", this, &ArenaCameraNode::create_diagnostics);
@@ -410,22 +423,37 @@ bool ArenaCameraNode::startGrabbing()
     //
     // TRIGGER MODE
     //
-    GenApi::CStringPtr pTriggerMode = pNodeMap->GetNode("TriggerMode");
+    GenApi::CEnumerationPtr pTriggerMode = pNodeMap->GetNode("TriggerMode");
+    trigger_mode_enabled_ = false;
     if (GenApi::IsWritable(pTriggerMode))
     {
-      Arena::SetNodeValue<GenICam::gcstring>(pNodeMap, "TriggerMode", "On");
+      Arena::SetNodeValue<GenICam::gcstring>(pNodeMap, "TriggerSelector", "FrameStart");
       Arena::SetNodeValue<GenICam::gcstring>(pNodeMap, "TriggerSource", "Software");
+      Arena::SetNodeValue<GenICam::gcstring>(pNodeMap, "TriggerMode", "On");
+      trigger_mode_enabled_ = true;
     }
 
     //
     // FRAMERATE
     //
     auto cmdlnParamFrameRate = arena_camera_parameter_set_.frameRate();
-    auto currentFrameRate = Arena::GetNodeValue<double>(pNodeMap , "AcquisitionFrameRate");
     auto maximumFrameRate = GenApi::CFloatPtr(pNodeMap->GetNode("AcquisitionFrameRate"))->GetMax();
 
-    // requested framerate larger than device max so we trancate it
-    if (cmdlnParamFrameRate >= maximumFrameRate)
+    // software trigger mode
+    if (trigger_mode_enabled_)
+    {
+      // set AcquisitionFrameRate to max so the camera re-arms as fast as possible between triggers and TriggerArmed wait is minimal
+      GenApi::CFloatPtr pAcquisitionFrameRate = pNodeMap->GetNode("AcquisitionFrameRate");
+      pAcquisitionFrameRate->SetValue(maximumFrameRate);
+      
+      // Current implementation minimizes latency: trigger exposure, immediately fetch that frame. 
+      // An alternative is to trigger exposure N and fetch the already-buffered frame N-1,
+      // which would decouple GetImage() from exposure wait but requires one extra buffered frame and introduces extra latency.
+      if (cmdlnParamFrameRate > kMaxTriggerModeFrameRateHz)
+         ROS_WARN("Desired framerate %.2f Hz will most likely result in skipped frames. Disable software trigger mode.", cmdlnParamFrameRate);
+    }
+    // requested framerate larger than device max so we truncate it
+    else if (cmdlnParamFrameRate >= maximumFrameRate)
     {
       arena_camera_parameter_set_.setFrameRate(nh_, maximumFrameRate);
       
@@ -602,13 +630,16 @@ bool ArenaCameraNode::startGrabbing()
     //
 
     pDevice_->StartStream();
+
     bool isTriggerArmed = false;
 
-    if (GenApi::IsWritable(pTriggerMode))
+    if (trigger_mode_enabled_)
     {
       do
       {
         isTriggerArmed = Arena::GetNodeValue<bool>(pNodeMap, "TriggerArmed");
+        if (!isTriggerArmed)
+          ros::Duration(0, 100000).sleep();  // 100 µs
       } while (isTriggerArmed == false);
       Arena::ExecuteNode(pNodeMap, "TriggerSoftware");
     }
@@ -657,6 +688,12 @@ bool ArenaCameraNode::startGrabbing()
                   << "shutter mode = " << arena_camera_parameter_set_.shutterModeString());
 
   pDevice_->RequeueBuffer(pImage_);
+
+  // Fill the circular buffer before the grab loop starts 
+  ROS_INFO("Initializing camera clock sync buffer (%d samples)...", kClockSyncBufferSize);
+  for (int i = 0; i < kClockSyncBufferSize; i++)
+    syncCameraClockOffset();
+
   return true;
 }
 
@@ -712,7 +749,95 @@ uint32_t ArenaCameraNode::getNumSubscribersRaw() const
   return ((CameraPublisherLocal*)(&img_raw_pub_))->impl_->image_pub_.getNumSubscribers();
 }
 
+void ArenaCameraNode::syncCameraClockOffset()
+{
+  uint64_t t1 = ros::Time::now().toNSec();
+  Arena::ExecuteNode(pDevice_->GetNodeMap(), "TimestampLatch");
+  int64_t camera_time_ns = Arena::GetNodeValue<int64_t>(pDevice_->GetNodeMap(), "TimestampLatchValue");
+  uint64_t t2 = ros::Time::now().toNSec();
+
+  ros::Time current_time = ros::Time().fromNSec(t2);
+  clock_samples_[clock_sample_idx_] = {
+    .offset_ns = static_cast<int64_t>(t1 + (t2 - t1) / 2) - camera_time_ns,
+    .roundtrip_ns = t2 - t1,
+    .sample_time = current_time
+};
+
+  const ClockSample* best = &clock_samples_[clock_sample_idx_]; // points to most recent sample
+  clock_sample_idx_ = (clock_sample_idx_ + 1) % kClockSyncBufferSize; // advance idx
+
+  for (const ClockSample& s : clock_samples_)
+  {
+    if (s.sample_time.isZero() || (current_time - s.sample_time).toSec() > kClockSyncMaxSampleAgeSeconds)
+      continue;
+    if (s.roundtrip_ns < best->roundtrip_ns)
+      best = &s;
+  }
+
+  int64_t prev_offset = camera_clock_offset_ns_;
+  camera_clock_offset_ns_ = best->offset_ns;
+
+  ROS_INFO_THROTTLE(100, "Camera clock sync: offset=%.3f ms, drift=%.3f ms, best_roundtrip=%.3f ms",
+                    static_cast<double>(camera_clock_offset_ns_) / 1e6,
+                    static_cast<double>(camera_clock_offset_ns_ - prev_offset) / 1e6,
+                    static_cast<double>(best->roundtrip_ns) / 1e6);
+}
+
 void ArenaCameraNode::spin()
+{
+  if (trigger_mode_enabled_)
+    spin_triggered();
+  else
+    spin_freerunning();
+}
+
+void ArenaCameraNode::spin_triggered()
+{
+  const uint64_t period_ns = static_cast<uint64_t>(std::llround(1e9 / arena_camera_parameter_set_.frameRate()));
+
+  // First boundary strictly after now.
+  next_trigger_ns_ = (ros::Time::now().toNSec() / period_ns + 1) * period_ns;
+
+  while (ros::ok())
+  {
+    spin_once(next_trigger_ns_);
+    // No-op if grabImage() already slept to this boundary; blocks only when
+    // there are no subscribers and spin_once() returned without grabbing.
+    ros::Time::sleepUntil(ros::Time().fromNSec(next_trigger_ns_));
+    next_trigger_ns_ += period_ns;
+
+    // Skip slots already in the past.
+    uint64_t now_ns = ros::Time::now().toNSec();
+    while (next_trigger_ns_ < now_ns)
+    {
+      ROS_INFO_THROTTLE(10, "camera grab loop running too slow, missed cycle by: %.3f ms",
+                        static_cast<double>(now_ns - next_trigger_ns_) / 1e6);
+      next_trigger_ns_ += period_ns;
+    }
+  }
+}
+
+void ArenaCameraNode::spin_freerunning()
+{
+  const ros::Duration period(1.0 / arena_camera_parameter_set_.frameRate());
+  // Arrive slightly before the next frame so GetImage() always blocks briefly,
+  // keeping the loop locked to the camera clock rather than drifting ahead.
+  const ros::Duration headroom(0.002);  // 2 ms
+
+  while (ros::ok())
+  {
+    ros::Time t_start = ros::Time::now();
+    spin_once();
+    ros::Duration elapsed = ros::Time::now() - t_start;
+    // Without this sleep, the loop busy-spins when there are no subscribers
+    // because spin_once() skips GetImage() and returns immediately.
+    ros::Duration remaining = period - elapsed - headroom;
+    if (remaining > ros::Duration(0))
+      remaining.sleep();
+  }
+}
+
+void ArenaCameraNode::spin_once(uint64_t trigger_at_ns)
 {
   if (camera_info_manager_->isCalibrated())
   {
@@ -743,7 +868,7 @@ void ArenaCameraNode::spin()
   {
     if (getNumSubscribersRaw() || getNumSubscribersRect())
     {
-      if (!grabImage())
+      if (!grabImage(trigger_at_ns))
       {
         ROS_INFO("did not get image");
         return;
@@ -752,14 +877,9 @@ void ArenaCameraNode::spin()
 
     if (img_raw_pub_.getNumSubscribers() > 0)
     {
-      // get actual cam_info-object in every frame, because it might have
-      // changed due to a 'set_camera_info'-service call
       sensor_msgs::CameraInfoPtr cam_info(new sensor_msgs::CameraInfo(camera_info_manager_->getCameraInfo()));
       cam_info->header.stamp = img_raw_msg_.header.stamp;
-
-      // Publish via image_transport
       img_raw_pub_.publish(img_raw_msg_, *cam_info);
-      ROS_INFO_ONCE("Number subscribers received");
     }
 
     if (getNumSubscribersRect() > 0 && camera_info_manager_->isCalibrated())
@@ -770,34 +890,41 @@ void ArenaCameraNode::spin()
       pinhole_model_->fromCameraInfo(camera_info_manager_->getCameraInfo());
       pinhole_model_->rectifyImage(cv_img_raw->image, cv_bridge_img_rect_->image);
       img_rect_pub_->publish(*cv_bridge_img_rect_);
-      ROS_INFO_ONCE("Number subscribers rect received");
     }
   }
 }
 
-bool ArenaCameraNode::grabImage()
+bool ArenaCameraNode::grabImage(uint64_t trigger_at_ns)
 {
   boost::lock_guard<boost::recursive_mutex> lock(grab_mutex_);
   try
   {
-    GenApi::CStringPtr pTriggerMode = pDevice_->GetNodeMap()->GetNode("TriggerMode");
-    if (GenApi::IsWritable(pTriggerMode))
+    if (trigger_mode_enabled_)
     {
       bool isTriggerArmed = false;
-
       do
       {
         isTriggerArmed = Arena::GetNodeValue<bool>(pDevice_->GetNodeMap(), "TriggerArmed");
+        if (!isTriggerArmed)
+          ros::Duration(0, 100000).sleep();  // 100 µs — avoids busy-spinning on GenICam transport
       } while (isTriggerArmed == false);
+
+      if (trigger_at_ns != 0)
+        ros::Time::sleepUntil(ros::Time().fromNSec(trigger_at_ns));
+
       Arena::ExecuteNode(pDevice_->GetNodeMap(), "TriggerSoftware");
     }
+
+    syncCameraClockOffset();
+
     pImage_ = pDevice_->GetImage(5000);
-    pData_ = pImage_->GetData();
 
     img_raw_msg_.data.resize(img_raw_msg_.height * img_raw_msg_.step);
     memcpy(&img_raw_msg_.data[0], pImage_->GetData(), img_raw_msg_.height * img_raw_msg_.step);
 
-    img_raw_msg_.header.stamp = ros::Time::now();
+    // Convert the camera's hardware capture timestamp to ROS time by adding the
+    // estimated ROS-minus-camera clock offset (maintained by syncCameraClockOffset()).
+    img_raw_msg_.header.stamp = ros::Time().fromNSec(pImage_->GetTimestampNs() + camera_clock_offset_ns_);
 
     pDevice_->RequeueBuffer(pImage_);
     return true;
