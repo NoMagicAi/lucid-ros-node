@@ -638,6 +638,8 @@ bool ArenaCameraNode::startGrabbing()
       do
       {
         isTriggerArmed = Arena::GetNodeValue<bool>(pNodeMap, "TriggerArmed");
+        if (!isTriggerArmed)
+          ros::Duration(0, 100000).sleep();  // 100 µs
       } while (isTriggerArmed == false);
       Arena::ExecuteNode(pNodeMap, "TriggerSoftware");
     }
@@ -817,8 +819,22 @@ void ArenaCameraNode::spin_triggered()
 
 void ArenaCameraNode::spin_freerunning()
 {
+  const ros::Duration period(1.0 / arena_camera_parameter_set_.frameRate());
+  // Arrive slightly before the next frame so GetImage() always blocks briefly,
+  // keeping the loop locked to the camera clock rather than drifting ahead.
+  const ros::Duration headroom(0.002);  // 2 ms
+
   while (ros::ok())
+  {
+    ros::Time t_start = ros::Time::now();
     spin_once();
+    ros::Duration elapsed = ros::Time::now() - t_start;
+    // Without this sleep, the loop busy-spins when there are no subscribers
+    // because spin_once() skips GetImage() and returns immediately.
+    ros::Duration remaining = period - elapsed - headroom;
+    if (remaining > ros::Duration(0))
+      remaining.sleep();
+  }
 }
 
 void ArenaCameraNode::spin_once(uint64_t trigger_at_ns)
