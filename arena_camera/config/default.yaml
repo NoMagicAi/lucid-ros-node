@@ -8,6 +8,10 @@ camera_frame: arena_camera
 #  device list will be used
 device_user_id: ""
 
+#  The serial number of the camera. If set, takes priority over device_user_id.
+#  If both are empty, the first camera found in the device list will be used
+serial_no: ""
+
 #  The CameraInfo URL (Uniform Resource Locator) where the optional intrinsic
 #  camera calibration parameters are stored. This URL string will be parsed
 #  from the ROS-CameraInfoManager:

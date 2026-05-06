@@ -149,7 +149,7 @@ void ArenaCameraNode::init()
   }
 }
 
-bool createDevice(const std::string& device_user_id_to_open)
+bool createDevice(const std::string& device_user_id_to_open, const std::string& serial_no_to_open)
 {
   pSystem_ = Arena::OpenSystem();
   pSystem_->UpdateDevices(100);
@@ -163,7 +163,35 @@ bool createDevice(const std::string& device_user_id_to_open)
   }
   else
   {
-    if (device_user_id_to_open.empty())
+    if (!serial_no_to_open.empty())
+    {
+      std::vector<Arena::DeviceInfo>::iterator it;
+      bool found_desired_device = false;
+
+      for (it = deviceInfos.begin(); it != deviceInfos.end(); ++it)
+      {
+        std::string serial_no_found(it->SerialNumber());
+        if (0 == serial_no_to_open.compare(serial_no_found))
+        {
+          found_desired_device = true;
+          break;
+        }
+      }
+      if (found_desired_device)
+      {
+        ROS_INFO_STREAM("Found the desired camera with serial number " << serial_no_to_open);
+        pDevice_ = pSystem_->CreateDevice(*it);
+        return true;
+      }
+      else
+      {
+        ROS_ERROR_STREAM("Couldn't find the camera that matches the "
+                         << "given serial number: " << serial_no_to_open << "! "
+                         << "Either the serial number is wrong or the cam is not yet connected");
+        return false;
+      }
+    }
+    else if (device_user_id_to_open.empty())
     {
       pDevice_ = pSystem_->CreateDevice(deviceInfos[0]);
       return true;
@@ -207,7 +235,7 @@ bool createDevice(const std::string& device_user_id_to_open)
 bool ArenaCameraNode::initAndRegister()
 {
   bool device_found_ = false;
-  device_found_ = createDevice(arena_camera_parameter_set_.deviceUserID());
+  device_found_ = createDevice(arena_camera_parameter_set_.deviceUserID(), arena_camera_parameter_set_.serialNo());
 
   if (device_found_ == false)
   {
@@ -216,7 +244,7 @@ bool ArenaCameraNode::initAndRegister()
     ros::Rate r(0.5);
     while (ros::ok() && device_found_ == false)
     {
-      device_found_ = createDevice(arena_camera_parameter_set_.deviceUserID());
+      device_found_ = createDevice(arena_camera_parameter_set_.deviceUserID(), arena_camera_parameter_set_.serialNo());
       if (ros::Time::now() > end)
       {
         ROS_WARN_STREAM("No camera present. Keep waiting ...");
