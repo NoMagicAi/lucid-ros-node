@@ -87,6 +87,7 @@ void ArenaCameraParameter::readFromRosParameterServer(const ros::NodeHandle& nh)
 
   nh.param<std::string>("device_user_id", device_user_id_, "");
   nh.param<std::string>("serial_no", serial_no_, "");
+  ROS_INFO_STREAM("serial_no param value: '" << serial_no_ << "'");
 
   if (nh.hasParam("frame_rate"))
   {
