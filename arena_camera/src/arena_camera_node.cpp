@@ -256,7 +256,15 @@ bool ArenaCameraNode::initAndRegister()
   }
   else
   {
-    ROS_INFO_STREAM("Camera " << arena_camera_parameter_set_.deviceUserID() << " is found!");
+    bool used_serial_no_ = arena_camera_parameter_set_.deviceUserID().empty();
+    if (used_serial_no_)
+    {
+      ROS_INFO_STREAM("Camera with serial no " << arena_camera_parameter_set_.serialNo() << " is found!");
+    }
+    else
+    {
+      ROS_INFO_STREAM("Camera " << arena_camera_parameter_set_.deviceUserID() << " is found!");
+    }
   }
 
   if (!ros::ok())
