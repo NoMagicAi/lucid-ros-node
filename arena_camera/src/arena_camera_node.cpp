@@ -256,7 +256,7 @@ bool ArenaCameraNode::initAndRegister()
   }
   else
   {
-    bool used_serial_no_ = arena_camera_parameter_set_.deviceUserID().empty();
+    bool used_serial_no_ = !arena_camera_parameter_set_.serialNo().empty();
     if (used_serial_no_)
     {
       ROS_INFO_STREAM("Camera with serial no " << arena_camera_parameter_set_.serialNo() << " is found!");
