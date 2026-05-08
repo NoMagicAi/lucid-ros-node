@@ -41,6 +41,7 @@ namespace arena_camera
 ArenaCameraParameter::ArenaCameraParameter()
   : camera_frame_("arena_camera")
   , device_user_id_("")
+  , serial_no_("")
   , frame_rate_(5.0)
   , camera_info_url_("")
   , image_encoding_("")
@@ -85,6 +86,7 @@ void ArenaCameraParameter::readFromRosParameterServer(const ros::NodeHandle& nh)
   nh.param<std::string>("camera_frame", camera_frame_, "arena_camera");
 
   nh.param<std::string>("device_user_id", device_user_id_, "");
+  nh.param<std::string>("serial_no", serial_no_, "");
 
   if (nh.hasParam("frame_rate"))
   {
@@ -384,13 +386,17 @@ void ArenaCameraParameter::adaptDeviceUserId(const ros::NodeHandle& nh, const st
 
 void ArenaCameraParameter::validateParameterSet(const ros::NodeHandle& nh)
 {
-  if (!device_user_id_.empty())
+  if (!serial_no_.empty())
+  {
+    ROS_INFO_STREAM("Trying to open camera with serial number: " << serial_no_.c_str());
+  }
+  else if (!device_user_id_.empty())
   {
     ROS_INFO_STREAM("Trying to open the following camera: " << device_user_id_.c_str());
   }
   else
   {
-    ROS_INFO_STREAM("No Device User ID set -> Will open the camera device "
+    ROS_INFO_STREAM("No Device User ID or serial number set -> Will open the camera device "
                     << "found first");
   }
 
@@ -436,6 +442,11 @@ void ArenaCameraParameter::validateParameterSet(const ros::NodeHandle& nh)
 const std::string& ArenaCameraParameter::deviceUserID() const
 {
   return device_user_id_;
+}
+
+const std::string& ArenaCameraParameter::serialNo() const
+{
+  return serial_no_;
 }
 
 std::string ArenaCameraParameter::shutterModeString() const
