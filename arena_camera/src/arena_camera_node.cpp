@@ -482,9 +482,21 @@ bool ArenaCameraNode::startGrabbing()
       GenApi::CFloatPtr pAcquisitionFrameRate = pNodeMap->GetNode("AcquisitionFrameRate");
       pAcquisitionFrameRate->SetValue(maximumFrameRate);
       
-      // Current implementation minimizes latency: trigger exposure, immediately fetch that frame. 
+      // Current implementation minimizes latency: trigger exposure, immediately fetch that frame.
+      //
+      //   Trigger:  [T(N)]                                   [T(N+1)]
+      //   Exposure:    [═════════E(N)═════════]
+      //   Network:                             [════N(N)════]
+      //   GetImage:     [═══════════════R(N)════════════════]──► frame N   latency = E + N
+      //
       // An alternative is to trigger exposure N and fetch the already-buffered frame N-1,
-      // which would decouple GetImage() from exposure wait but requires one extra buffered frame and introduces extra latency.
+      // which would decouple GetImage() from exposure wait but requires one extra buffered frame
+      // and introduces extra latency (image is one full cycle old):
+      //
+      //   Trigger: [T(N-1)]                [T(N)]
+      //   Exposure:        [════E(N-1)════]        [════E(N)════]
+      //   Network:  [════N(N-1)════]       [════N(N-1)════]
+      //   GetImage:         [R(N-2)]               [R(N-1)]──► frame N-1   latency = max(1/framerate, E+N)
       if (cmdlnParamFrameRate > kMaxTriggerModeFrameRateHz)
          ROS_WARN("Desired framerate %.2f Hz will most likely result in skipped frames. Disable software trigger mode.", cmdlnParamFrameRate);
     }
@@ -857,7 +869,7 @@ void ArenaCameraNode::spin_freerunning()
 {
   const ros::Duration period(1.0 / arena_camera_parameter_set_.frameRate());
   // Arrive slightly before the next frame so GetImage() always blocks briefly,
-  // keeping the loop locked to the camera clock rather than drifting ahead.
+  // keeping the loop locked to the camera clock rather than drifting behind.
   const ros::Duration headroom(0.002);  // 2 ms
 
   while (ros::ok())
