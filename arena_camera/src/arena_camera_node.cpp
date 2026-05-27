@@ -451,6 +451,9 @@ bool ArenaCameraNode::startGrabbing()
     {
       Arena::SetNodeValue<GenICam::gcstring>(pNodeMap, "TriggerMode", "On");
       Arena::SetNodeValue<GenICam::gcstring>(pNodeMap, "TriggerSource", "Software");
+    }else{
+      Arena::SetNodeValue<GenICam::gcstring>(pNodeMap, "TriggerMode", "Off");
+
     }
 
     //
