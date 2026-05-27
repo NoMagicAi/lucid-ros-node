@@ -36,15 +36,24 @@
 #include <ros/ros.h>
 #include <boost/thread.hpp>
 
+// STD
+#include <csignal>
+
 // Arena
 #include <ArenaApi.h>
 
 // Arena node
 #include <arena_camera/arena_camera_node.h>
 
+static void sigtermHandler(int)
+{
+  ros::shutdown();
+}
+
 int main(int argc, char **argv)
 {
   ros::init(argc, argv, "arena_camera_node");
+  signal(SIGTERM, sigtermHandler);
 
   arena_camera::ArenaCameraNode arena_camera_node;
 

@@ -463,11 +463,23 @@ bool ArenaCameraNode::startGrabbing()
     trigger_mode_enabled_ = false;
     if (GenApi::IsWritable(pTriggerMode))
     {
-      Arena::SetNodeValue<GenICam::gcstring>(pNodeMap, "TriggerSelector", "FrameStart");
-      Arena::SetNodeValue<GenICam::gcstring>(pNodeMap, "TriggerSource", "Software");
-      Arena::SetNodeValue<GenICam::gcstring>(pNodeMap, "TriggerMode", "On");
-      trigger_mode_enabled_ = true;
+      if (arena_camera_parameter_set_.trigger_mode_enabled_)
+      {
+        Arena::SetNodeValue<GenICam::gcstring>(pNodeMap, "TriggerSelector", "FrameStart");
+        Arena::SetNodeValue<GenICam::gcstring>(pNodeMap, "TriggerSource", "Software");
+        Arena::SetNodeValue<GenICam::gcstring>(pNodeMap, "TriggerMode", "On");
+        trigger_mode_enabled_ = true;
+      }
+      else
+      {
+        Arena::SetNodeValue<GenICam::gcstring>(pNodeMap, "TriggerMode", "Off");
+      }
     }
+    else if (arena_camera_parameter_set_.trigger_mode_enabled_)
+    {
+      ROS_WARN("trigger mode enabled but camera doesn't support it, falling back to free-running mode.");
+    }
+    ROS_INFO("Starting camera with trigger_mode_enabled=%d", trigger_mode_enabled_);
 
     //
     // FRAMERATE
@@ -2136,6 +2148,18 @@ ArenaCameraNode::~ArenaCameraNode()
 {
   if (pDevice_ != nullptr)
   {
+    try
+    {
+      pDevice_->StopStream();
+      if (trigger_mode_enabled_)
+      {
+        Arena::SetNodeValue<GenICam::gcstring>(pDevice_->GetNodeMap(), "TriggerMode", "Off");
+      }
+    }
+    catch (const GenICam::GenericException& e)
+    {
+      fprintf(stderr, "Exception during camera shutdown: %s\n", e.GetDescription());
+    }
     pSystem_->DestroyDevice(pDevice_);
   }
 
