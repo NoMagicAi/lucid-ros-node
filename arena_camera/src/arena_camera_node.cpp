@@ -51,10 +51,9 @@ using diagnostic_msgs::DiagnosticStatus;
 
 namespace arena_camera
 {
-// Maximum frame rate in software-trigger mode before frames are likely dropped.
-// Above this rate the host cannot reliably trigger acquisition because the thread
-// is blocked for too long while waiting for fetching of the newest image to complete
-static constexpr double kMaxTriggerModeFrameRateHz = 20.0;
+// Assumed worst-case GigE network transport time (trigger command + image
+// transfer) added on top of exposure when estimating the max safe trigger rate.
+static constexpr double kNetworkTransportMarginMs = 30.0;
 
 // Discard clock-sync samples older than this; avoids using stale offsets after
 // a long idle period where the camera or host clock may have drifted significantly.
@@ -493,24 +492,6 @@ bool ArenaCameraNode::startGrabbing()
       // set AcquisitionFrameRate to max so the camera re-arms as fast as possible between triggers and TriggerArmed wait is minimal
       GenApi::CFloatPtr pAcquisitionFrameRate = pNodeMap->GetNode("AcquisitionFrameRate");
       pAcquisitionFrameRate->SetValue(maximumFrameRate);
-      
-      // Current implementation minimizes latency: trigger exposure, immediately fetch that frame.
-      //
-      //   Trigger:  [T(N)]                                   [T(N+1)]
-      //   Exposure:    [═════════E(N)═════════]
-      //   Network:                             [════N(N)════]
-      //   GetImage:     [═══════════════R(N)════════════════]──► frame N   latency = E + N
-      //
-      // An alternative is to trigger exposure N and fetch the already-buffered frame N-1,
-      // which would decouple GetImage() from exposure wait but requires one extra buffered frame
-      // and introduces extra latency (image is one full cycle old):
-      //
-      //   Trigger: [T(N-1)]                [T(N)]
-      //   Exposure:        [════E(N-1)════]        [════E(N)════]
-      //   Network:  [════N(N-1)════]       [════N(N-1)════]
-      //   GetImage:         [R(N-2)]               [R(N-1)]──► frame N-1   latency = max(1/framerate, E+N)
-      if (cmdlnParamFrameRate > kMaxTriggerModeFrameRateHz)
-         ROS_WARN("Desired framerate %.2f Hz will most likely result in skipped frames. Disable software trigger mode.", cmdlnParamFrameRate);
     }
     // requested framerate larger than device max so we truncate it
     else if (cmdlnParamFrameRate >= maximumFrameRate)
@@ -1566,6 +1547,42 @@ bool ArenaCameraNode::setExposureValue(const float& target_exposure, float& reac
       ROS_WARN_STREAM("Desired exposure (" << exposure_to_set << ") "
                                            << "time unreachable! Setting to upper limit: " << pExposureTime->GetMax());
       exposure_to_set = pExposureTime->GetMax();
+    }
+
+    if (trigger_mode_enabled_)
+    {
+      // In trigger mode the full cycle is: trigger command → exposure → network
+      // transfer → GetImage() returns. To avoid dropping frames, exposure must
+      // fit within the period minus the network transport margin:
+      //
+      //   Trigger:  [T(N)]                                   [T(N+1)]
+      //   Exposure:    [═════════E(N)═════════]
+      //   Network:                             [════N(N)════]
+      //   GetImage:     [═══════════════R(N)════════════════]──► frame N   latency = E + N
+      //
+      // An alternative is to trigger exposure N and fetch the already-buffered frame N-1,
+      // which would decouple GetImage() from exposure wait but requires one extra buffered frame
+      // and introduces extra latency (image is one full cycle old):
+      //
+      //   Trigger: [T(N-1)]                [T(N)]
+      //   Exposure:        [════E(N-1)════]        [════E(N)════]
+      //   Network:  [════N(N-2)════]       [════N(N-1)════]
+      //   GetImage:         [R(N-2)]               [R(N-1)]──► frame N-1   latency = max(1/framerate, E+N)
+      float max_trigger_exposure_us =
+          static_cast<float>((1000.0 / frameRate() - kNetworkTransportMarginMs) * 1000.0);
+      if (max_trigger_exposure_us < 10000.0f)
+      {
+        ROS_ERROR("Framerate %.1f Hz too high for trigger mode — less than 10 ms left for exposure after %.0f ms network transport margin, frames will be dropped.",
+                  frameRate(), kNetworkTransportMarginMs);
+      }
+      else if (exposure_to_set > max_trigger_exposure_us)
+      {
+        ROS_WARN("Clamping exposure %.1f us to %.1f us to fit within trigger "
+                 "period at %.1f Hz (%.0f ms network transport margin).",
+                 exposure_to_set, max_trigger_exposure_us, frameRate(),
+                 kNetworkTransportMarginMs);
+        exposure_to_set = max_trigger_exposure_us;
+      }
     }
 
     pExposureTime->SetValue(exposure_to_set);
