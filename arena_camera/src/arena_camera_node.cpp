@@ -490,9 +490,22 @@ bool ArenaCameraNode::startGrabbing()
     // software trigger mode
     if (trigger_mode_enabled_)
     {
-      // set AcquisitionFrameRate to max so the camera re-arms as fast as possible between triggers and TriggerArmed wait is minimal
-      GenApi::CFloatPtr pAcquisitionFrameRate = pNodeMap->GetNode("AcquisitionFrameRate");
-      pAcquisitionFrameRate->SetValue(maximumFrameRate);
+      float max_trigger_exposure_us =
+          static_cast<float>((1000.0 / cmdlnParamFrameRate - kNetworkTransportMarginMs) * 1000.0);
+      if (max_trigger_exposure_us < kMinTriggerExposureUs)
+      {
+        ROS_WARN("Framerate %.1f Hz too high for trigger mode (only %.1f ms headroom for exposure "
+                 "after %.0f ms network transport margin) — falling back to free-running mode.",
+                 cmdlnParamFrameRate, max_trigger_exposure_us / 1000.0f, kNetworkTransportMarginMs);
+        Arena::SetNodeValue<GenICam::gcstring>(pNodeMap, "TriggerMode", "Off");
+        trigger_mode_enabled_ = false;
+      }
+      else
+      {
+        // set AcquisitionFrameRate to max so the camera re-arms as fast as possible between triggers and TriggerArmed wait is minimal
+        GenApi::CFloatPtr pAcquisitionFrameRate = pNodeMap->GetNode("AcquisitionFrameRate");
+        pAcquisitionFrameRate->SetValue(maximumFrameRate);
+      }
     }
     // requested framerate larger than device max so we truncate it
     else if (cmdlnParamFrameRate >= maximumFrameRate)
@@ -1571,12 +1584,7 @@ bool ArenaCameraNode::setExposureValue(const float& target_exposure, float& reac
       //   GetImage:         [R(N-2)]               [R(N-1)] ──► frame N-1   latency = max(1/framerate, E+N)
       float max_trigger_exposure_us =
           static_cast<float>((1000.0 / frameRate() - kNetworkTransportMarginMs) * 1000.0);
-      if (max_trigger_exposure_us < kMinTriggerExposureUs)
-      {
-        ROS_ERROR("Framerate %.1f Hz too high for trigger mode — less than 10 ms left for exposure after %.0f ms network transport margin, frames will be dropped.",
-                  frameRate(), kNetworkTransportMarginMs);
-      }
-      else if (exposure_to_set > max_trigger_exposure_us)
+      if (exposure_to_set > max_trigger_exposure_us)
       {
         ROS_WARN("Clamping exposure %.1f us to %.1f us to fit within trigger "
                  "period at %.1f Hz (%.0f ms network transport margin).",
