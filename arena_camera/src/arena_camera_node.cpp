@@ -487,7 +487,6 @@ bool ArenaCameraNode::startGrabbing()
     auto cmdlnParamFrameRate = arena_camera_parameter_set_.frameRate();
     auto maximumFrameRate = GenApi::CFloatPtr(pNodeMap->GetNode("AcquisitionFrameRate"))->GetMax();
 
-    // software trigger mode
     if (trigger_mode_enabled_)
     {
       float max_trigger_exposure_us =
@@ -500,12 +499,14 @@ bool ArenaCameraNode::startGrabbing()
         Arena::SetNodeValue<GenICam::gcstring>(pNodeMap, "TriggerMode", "Off");
         trigger_mode_enabled_ = false;
       }
-      else
-      {
-        // set AcquisitionFrameRate to max so the camera re-arms as fast as possible between triggers and TriggerArmed wait is minimal
-        GenApi::CFloatPtr pAcquisitionFrameRate = pNodeMap->GetNode("AcquisitionFrameRate");
-        pAcquisitionFrameRate->SetValue(maximumFrameRate);
-      }
+    }
+
+    // software trigger mode
+    if (trigger_mode_enabled_)
+    {
+      // set AcquisitionFrameRate to max so the camera re-arms as fast as possible between triggers and TriggerArmed wait is minimal
+      GenApi::CFloatPtr pAcquisitionFrameRate = pNodeMap->GetNode("AcquisitionFrameRate");
+      pAcquisitionFrameRate->SetValue(maximumFrameRate);
     }
     // requested framerate larger than device max so we truncate it
     else if (cmdlnParamFrameRate >= maximumFrameRate)
