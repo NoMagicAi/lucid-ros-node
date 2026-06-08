@@ -54,6 +54,7 @@ namespace arena_camera
 // Assumed worst-case GigE network transport time (trigger command + image
 // transfer) added on top of exposure when estimating the max safe trigger rate.
 static constexpr double kNetworkTransportMarginMs = 30.0;
+static constexpr float kMinTriggerExposureUs = 10000.0f;  // 10 ms minimum usable exposure headroom in trigger mode
 
 // Discard clock-sync samples older than this; avoids using stale offsets after
 // a long idle period where the camera or host clock may have drifted significantly.
@@ -804,7 +805,7 @@ void ArenaCameraNode::syncCameraClockOffset()
     .sample_time = current_time
 };
 
-  const ClockSample* best = &clock_samples_[clock_sample_idx_]; // points to most recent sample
+  const ClockSample* best = &clock_samples_[clock_sample_idx_]; // default to most-recently-written sample (always valid); loop below may replace with lower-roundtrip sample
   clock_sample_idx_ = (clock_sample_idx_ + 1) % kClockSyncBufferSize; // advance idx
 
   for (const ClockSample& s : clock_samples_)
@@ -1555,22 +1556,22 @@ bool ArenaCameraNode::setExposureValue(const float& target_exposure, float& reac
       // transfer → GetImage() returns. To avoid dropping frames, exposure must
       // fit within the period minus the network transport margin:
       //
-      //   Trigger:  [T(N)]                                   [T(N+1)]
-      //   Exposure:    [═════════E(N)═════════]
-      //   Network:                             [════N(N)════]
-      //   GetImage:     [═══════════════R(N)════════════════]──► frame N   latency = E + N
+      //   Trigger:  [T(N)]                                     [T(N+1)]
+      //   Exposure:      [═════════E(N)═════════]
+      //   Network:                              [════N(N)════]
+      //   GetImage:         [═════════════R(N)═══════════════] ──► frame N   latency = E + N
       //
       // An alternative is to trigger exposure N and fetch the already-buffered frame N-1,
       // which would decouple GetImage() from exposure wait but requires one extra buffered frame
       // and introduces extra latency (image is one full cycle old):
       //
-      //   Trigger: [T(N-1)]                [T(N)]
-      //   Exposure:        [════E(N-1)════]        [════E(N)════]
-      //   Network:  [════N(N-2)════]       [════N(N-1)════]
-      //   GetImage:         [R(N-2)]               [R(N-1)]──► frame N-1   latency = max(1/framerate, E+N)
+      //   Trigger: [T(N-1)]                  [T(N)]
+      //   Exposure:       [════E(N-1)════]        [════E(N)════]
+      //   Network:  [════N(N-2)════]     [═════N(N-1)═════]
+      //   GetImage:         [R(N-2)]               [R(N-1)] ──► frame N-1   latency = max(1/framerate, E+N)
       float max_trigger_exposure_us =
           static_cast<float>((1000.0 / frameRate() - kNetworkTransportMarginMs) * 1000.0);
-      if (max_trigger_exposure_us < 10000.0f)
+      if (max_trigger_exposure_us < kMinTriggerExposureUs)
       {
         ROS_ERROR("Framerate %.1f Hz too high for trigger mode — less than 10 ms left for exposure after %.0f ms network transport margin, frames will be dropped.",
                   frameRate(), kNetworkTransportMarginMs);

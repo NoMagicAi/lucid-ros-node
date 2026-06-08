@@ -122,8 +122,9 @@ public:
 
 protected:
   /**
-  * Take one NTP sample, store in circular buffer, update camera_clock_offset_ns_
-  * with the best (minimum roundtrip) {host_midpoint_time - camera_time} sample in the buffer.
+  * Take one clock sync sample, store it in a sliding window of the N most recent samples,
+  * and update camera_clock_offset_ns_ with the best (minimum roundtrip)
+  * {host_midpoint_time - camera_time} sample in the window.
   */
   void syncCameraClockOffset();
 
