@@ -291,6 +291,8 @@ public:
    */
   bool auto_flash_line_3_;
 
+  bool trigger_mode_enabled_;
+
 protected:
   /**
    * Validates the parameter set found on the ros parameter server.
