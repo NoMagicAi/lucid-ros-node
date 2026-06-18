@@ -74,7 +74,6 @@ ArenaCameraParameter::ArenaCameraParameter()
   , inter_pkg_delay_(1000)
   , shutter_mode_(SM_DEFAULT)
   , auto_flash_(false)
-  , trigger_mode_enabled_(true)
 {
 }
 
@@ -375,9 +374,6 @@ void ArenaCameraParameter::readFromRosParameterServer(const ros::NodeHandle& nh)
   nh.param<bool>("auto_flash_line_3", auto_flash_line_3_, true);
 
   ROS_WARN("Autoflash: %i, line2: %i , line3: %i ", auto_flash_, auto_flash_line_2_, auto_flash_line_3_);
-
-  nh.param<bool>("trigger_mode_enabled", trigger_mode_enabled_, true);
-
   validateParameterSet(nh);
   return;
 }

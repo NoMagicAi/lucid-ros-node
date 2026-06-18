@@ -36,26 +36,19 @@
 #include <ros/ros.h>
 #include <boost/thread.hpp>
 
-// STD
-#include <csignal>
-
 // Arena
 #include <ArenaApi.h>
 
 // Arena node
 #include <arena_camera/arena_camera_node.h>
 
-static void sigtermHandler(int)
-{
-  ros::shutdown();
-}
-
 int main(int argc, char **argv)
 {
   ros::init(argc, argv, "arena_camera_node");
-  signal(SIGTERM, sigtermHandler);
 
   arena_camera::ArenaCameraNode arena_camera_node;
+
+  ros::Rate r(arena_camera_node.frameRate());
 
   ROS_INFO_STREAM("Start image grabbing if node connects to topic with "
                   << "a frame_rate of: " << arena_camera_node.frameRate() << " Hz");
@@ -63,7 +56,11 @@ int main(int argc, char **argv)
   // Main thread and brightness-service thread
   boost::thread th(boost::bind(&ros::spin));
 
-  arena_camera_node.spin();
+  while (ros::ok())
+  {
+    arena_camera_node.spin();
+    r.sleep();
+  }
 
   ROS_INFO("Terminate ArenaCameraNode");
   return EXIT_SUCCESS;
