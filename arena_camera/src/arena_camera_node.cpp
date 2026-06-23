@@ -505,8 +505,11 @@ bool ArenaCameraNode::startGrabbing()
     if (trigger_mode_enabled_)
     {
       // set AcquisitionFrameRate to max so the camera re-arms as fast as possible between triggers and TriggerArmed wait is minimal
+      // AcquisitionFrameRate is read-only unless AcquisitionFrameRateEnable is set first
+      Arena::SetNodeValue<bool>(pNodeMap, "AcquisitionFrameRateEnable", true);
       GenApi::CFloatPtr pAcquisitionFrameRate = pNodeMap->GetNode("AcquisitionFrameRate");
-      pAcquisitionFrameRate->SetValue(maximumFrameRate);
+      if (GenApi::IsWritable(pAcquisitionFrameRate))
+        pAcquisitionFrameRate->SetValue(maximumFrameRate);
     }
     // requested framerate larger than device max so we truncate it
     else if (cmdlnParamFrameRate >= maximumFrameRate)
