@@ -428,6 +428,7 @@ protected:
   };
   std::array<ClockSample, kClockSyncBufferSize> clock_samples_;
   int clock_sample_idx_;
+  ros::Time last_clock_sync_time_;
 
   /// diagnostics:
   diagnostic_updater::Updater diagnostics_updater_;

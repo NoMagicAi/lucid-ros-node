@@ -60,6 +60,12 @@ static constexpr float kMinTriggerExposureUs = 10000.0f;  // 10 ms minimum usabl
 // a long idle period where the camera or host clock may have drifted significantly.
 static constexpr double kClockSyncMaxSampleAgeSeconds = 600.0;  // 10 minutes
 
+// How often to re-sync while nothing consumes the pixels. Each sync is a GenICam
+// round-trip to the camera, so the monitoring path does not need one per frame:
+// the offset drifts by ~14 us/s on these cameras, far below the accuracy a health
+// check resolves. The pixel path keeps syncing per frame.
+static constexpr double kMonitoringClockSyncPeriodSeconds = 1.0;
+
 Arena::ISystem* pSystem_ = nullptr;
 Arena::IDevice* pDevice_ = nullptr;
 Arena::IImage* pImage_ = nullptr;
@@ -835,6 +841,7 @@ void ArenaCameraNode::syncCameraClockOffset()
 
   int64_t prev_offset = camera_clock_offset_ns_;
   camera_clock_offset_ns_ = best->offset_ns;
+  last_clock_sync_time_ = current_time;
 
   ROS_INFO_THROTTLE(100, "Camera clock sync: offset=%.3f ms, drift=%.3f ms, best_roundtrip=%.3f ms",
                     static_cast<double>(camera_clock_offset_ns_) / 1e6,
@@ -923,15 +930,16 @@ void ArenaCameraNode::spin_once(uint64_t trigger_at_ns)
     return;
   }
 
-  // Gated on pixel subscribers, not on img_raw_pub_.getNumSubscribers(), which
-  // also counts camera_info. camera_info shares this CameraPublisher and carries
-  // the capture stamp set in grabImage(), so entering here without grabbing
-  // republished a frozen stamp at full rate: a monitor watching camera_info saw
-  // fresh messages whose timestamps had not moved for tens of seconds. Grabbing
-  // for such a monitor is not the alternative; in software-trigger mode that
-  // would command a real exposure and readout on an otherwise idle camera.
-  if (!isSleeping() && (getNumSubscribersRaw() || getNumSubscribersRect()))
+  if (!isSleeping() && (img_raw_pub_.getNumSubscribers() || getNumSubscribersRect()))
   {
+    // Grab on every pass, including for a camera_info-only subscriber.
+    // advertiseCamera() publishes image_raw and camera_info from one
+    // CameraPublisher, and camera_info carries the capture stamp set in
+    // grabImage(). Gating the grab on pixel subscribers alone therefore
+    // republished the previous frame's stamp at full rate: a health monitor
+    // watching camera_info saw fresh messages whose timestamps had not moved for
+    // tens of seconds. Receiving the frame is what makes the stamp real; keeping
+    // it is separate, and stays gated inside grabImage().
     if (!grabImage(trigger_at_ns))
     {
       ROS_INFO("did not get image");
@@ -978,12 +986,26 @@ bool ArenaCameraNode::grabImage(uint64_t trigger_at_ns)
       Arena::ExecuteNode(pDevice_->GetNodeMap(), "TriggerSoftware");
     }
 
-    syncCameraClockOffset();
+    const bool pixels_wanted = getNumSubscribersRaw() || getNumSubscribersRect();
+
+    if (pixels_wanted || (ros::Time::now() - last_clock_sync_time_).toSec() >= kMonitoringClockSyncPeriodSeconds)
+    {
+      syncCameraClockOffset();
+    }
 
     pImage_ = pDevice_->GetImage(5000);
 
+    // Resized unconditionally: a subscriber can connect between this grab and the
+    // publish in spin_once(), and must not receive a message whose data length
+    // disagrees with height * step. It is a no-op once the buffer is sized.
     img_raw_msg_.data.resize(img_raw_msg_.height * img_raw_msg_.step);
-    memcpy(&img_raw_msg_.data[0], pImage_->GetData(), img_raw_msg_.height * img_raw_msg_.step);
+
+    // The frame is received either way, which is what makes the stamp below a
+    // measured one; only a consumer of the pixels pays to copy them out.
+    if (pixels_wanted)
+    {
+      memcpy(&img_raw_msg_.data[0], pImage_->GetData(), img_raw_msg_.height * img_raw_msg_.step);
+    }
 
     // Convert the camera's hardware capture timestamp to ROS time by adding the
     // estimated ROS-minus-camera clock offset (maintained by syncCameraClockOffset()).
