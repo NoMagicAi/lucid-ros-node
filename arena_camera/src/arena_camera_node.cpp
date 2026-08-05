@@ -925,13 +925,18 @@ void ArenaCameraNode::spin_once(uint64_t trigger_at_ns)
 
   if (!isSleeping() && (img_raw_pub_.getNumSubscribers() || getNumSubscribersRect()))
   {
-    if (getNumSubscribersRaw() || getNumSubscribersRect())
+    // Grab whenever anything is subscribed, including a camera_info-only
+    // subscriber. advertiseCamera() publishes image_raw and camera_info from one
+    // CameraPublisher, and camera_info carries the capture stamp set below in
+    // grabImage(). Gating the grab on image subscribers alone therefore
+    // republished a stale image and a frozen stamp at full rate to anyone
+    // watching camera_info: a health monitor saw fresh messages whose timestamps
+    // had not moved for tens of seconds. The pixel copy stays gated, in
+    // grabImage(), so this costs a buffer round-trip and not a memcpy.
+    if (!grabImage(trigger_at_ns))
     {
-      if (!grabImage(trigger_at_ns))
-      {
-        ROS_INFO("did not get image");
-        return;
-      }
+      ROS_INFO("did not get image");
+      return;
     }
 
     if (img_raw_pub_.getNumSubscribers() > 0)
@@ -978,8 +983,13 @@ bool ArenaCameraNode::grabImage(uint64_t trigger_at_ns)
 
     pImage_ = pDevice_->GetImage(5000);
 
-    img_raw_msg_.data.resize(img_raw_msg_.height * img_raw_msg_.step);
-    memcpy(&img_raw_msg_.data[0], pImage_->GetData(), img_raw_msg_.height * img_raw_msg_.step);
+    // Only consumers of the pixels pay for the copy; a camera_info-only
+    // subscriber needs the timestamp below and nothing else.
+    if (getNumSubscribersRaw() || getNumSubscribersRect())
+    {
+      img_raw_msg_.data.resize(img_raw_msg_.height * img_raw_msg_.step);
+      memcpy(&img_raw_msg_.data[0], pImage_->GetData(), img_raw_msg_.height * img_raw_msg_.step);
+    }
 
     // Convert the camera's hardware capture timestamp to ROS time by adding the
     // estimated ROS-minus-camera clock offset (maintained by syncCameraClockOffset()).
