@@ -66,6 +66,14 @@ static constexpr double kClockSyncMaxSampleAgeSeconds = 600.0;  // 10 minutes
 // check resolves. The pixel path keeps syncing per frame.
 static constexpr double kMonitoringClockSyncPeriodSeconds = 1.0;
 
+// How often to acquire a frame purely so a health monitor can read its capture
+// stamp. These cameras are software-triggered, so a frame exists only if we ask
+// for one, and asking costs an exposure plus a full-frame transfer over the
+// camera link. Sampling rather than running at frameRate() keeps an idle camera's
+// link near-free; each sample still carries a full-precision capture stamp, so
+// left/right skew is measured no less accurately, only less often.
+static constexpr double kMonitoringGrabRateHz = 2.0;
+
 Arena::ISystem* pSystem_ = nullptr;
 Arena::IDevice* pDevice_ = nullptr;
 Arena::IImage* pImage_ = nullptr;
@@ -106,6 +114,7 @@ ArenaCameraNode::ArenaCameraNode()
   , camera_clock_offset_ns_(0)
   , clock_samples_()
   , clock_sample_idx_(0)
+  , last_monitoring_slot_(0)
 {
   diagnostics_updater_.setHardwareID("none");
   diagnostics_updater_.add("camera_availability", this, &ArenaCameraNode::create_diagnostics);
@@ -814,6 +823,21 @@ uint32_t ArenaCameraNode::getNumSubscribersRaw() const
   return ((CameraPublisherLocal*)(&img_raw_pub_))->impl_->image_pub_.getNumSubscribers();
 }
 
+bool ArenaCameraNode::claimMonitoringSample()
+{
+  const uint64_t period_ns = static_cast<uint64_t>(std::llround(1e9 / kMonitoringGrabRateHz));
+  // The slot index comes from absolute time, so every camera on the station picks
+  // the same slots without coordinating. Together with spin_triggered() aligning
+  // triggers to absolute frame boundaries, that keeps the left and right wrist
+  // stamps sampled at the same instants and directly comparable.
+  const uint64_t slot = ros::Time::now().toNSec() / period_ns;
+  if (slot == last_monitoring_slot_)
+    return false;
+
+  last_monitoring_slot_ = slot;
+  return true;
+}
+
 void ArenaCameraNode::syncCameraClockOffset()
 {
   uint64_t t1 = ros::Time::now().toNSec();
@@ -932,14 +956,16 @@ void ArenaCameraNode::spin_once(uint64_t trigger_at_ns)
 
   if (!isSleeping() && (img_raw_pub_.getNumSubscribers() || getNumSubscribersRect()))
   {
-    // Grab on every pass, including for a camera_info-only subscriber.
     // advertiseCamera() publishes image_raw and camera_info from one
     // CameraPublisher, and camera_info carries the capture stamp set in
-    // grabImage(). Gating the grab on pixel subscribers alone therefore
-    // republished the previous frame's stamp at full rate: a health monitor
-    // watching camera_info saw fresh messages whose timestamps had not moved for
-    // tens of seconds. Receiving the frame is what makes the stamp real; keeping
-    // it is separate, and stays gated inside grabImage().
+    // grabImage(). Skipping the grab while still publishing therefore handed a
+    // camera_info-only subscriber the previous frame's stamp at full rate, frozen
+    // for as long as no pixel consumer appeared. Such a subscriber is a health
+    // monitor: it needs a stamp that was really measured, but not one per frame,
+    // so grab for it at kMonitoringGrabRateHz rather than at frameRate().
+    if (!(getNumSubscribersRaw() || getNumSubscribersRect()) && !claimMonitoringSample())
+      return;
+
     if (!grabImage(trigger_at_ns))
     {
       ROS_INFO("did not get image");

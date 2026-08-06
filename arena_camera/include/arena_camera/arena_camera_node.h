@@ -129,6 +129,12 @@ protected:
   void syncCameraClockOffset();
 
   /**
+  * Returns true at most once per monitoring interval, claiming that interval, so a
+  * camera_info-only subscriber gets a real capture stamp without a grab per frame.
+  */
+  bool claimMonitoringSample();
+
+  /**
   * Creates the camera instance and starts the services and action servers.
   * @return false if an error occurred
   */
@@ -429,6 +435,7 @@ protected:
   std::array<ClockSample, kClockSyncBufferSize> clock_samples_;
   int clock_sample_idx_;
   ros::Time last_clock_sync_time_;
+  uint64_t last_monitoring_slot_;
 
   /// diagnostics:
   diagnostic_updater::Updater diagnostics_updater_;
