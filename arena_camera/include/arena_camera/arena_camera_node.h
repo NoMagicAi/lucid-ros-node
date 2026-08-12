@@ -165,6 +165,12 @@ protected:
   uint32_t getNumSubscribersRect() const;
 
   /**
+  * Publishes on the latched ~streaming topic whenever the state changes:
+  * true exactly while frames are grabbed for a pixel subscriber.
+  */
+  void publishStreamingState();
+
+  /**
   * Grabs an image and stores the image in img_raw_msg_
   * @return false if an error occurred.
   */
@@ -399,6 +405,12 @@ protected:
 
   image_transport::ImageTransport* it_;
   image_transport::CameraPublisher img_raw_pub_;
+
+  // Latched so a late subscriber gets the current state on connect. The last
+  // published state is kept as an int, -1 before the first publish, so the
+  // header stays buildable with the repo's default -std=gnu++11 (no optional).
+  ros::Publisher streaming_pub_;
+  int last_streaming_state_;
 
   ros::Publisher* img_rect_pub_;
   image_geometry::PinholeCameraModel* pinhole_model_;
