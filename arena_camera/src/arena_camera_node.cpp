@@ -88,7 +88,6 @@ ArenaCameraNode::ArenaCameraNode()
   , it_(new image_transport::ImageTransport(nh_))
   , img_raw_pub_(it_->advertiseCamera("image_raw", 1))
   , streaming_pub_(nh_.advertise<std_msgs::Bool>("streaming", 1, /*latch=*/true))
-  , last_streaming_state_(-1)
   , img_rect_pub_(nullptr)
   , grab_imgs_raw_as_(nh_, "grab_images_raw", boost::bind(&ArenaCameraNode::grabImagesRawActionExecuteCB, this, _1),
                       false)
@@ -904,14 +903,8 @@ void ArenaCameraNode::publishStreamingState()
   // Mirrors the grab condition in spin_once(): true exactly while frames are
   // being acquired for a pixel subscriber. camera_info-only subscribers are
   // served republished messages without a grab, so they do not count.
-  const bool streaming = !isSleeping() && (getNumSubscribersRaw() || getNumSubscribersRect());
-  if (last_streaming_state_ == static_cast<int>(streaming))
-  {
-    return;
-  }
-  last_streaming_state_ = static_cast<int>(streaming);
   std_msgs::Bool msg;
-  msg.data = streaming;
+  msg.data = !isSleeping() && (getNumSubscribersRaw() || getNumSubscribersRect());
   streaming_pub_.publish(msg);
 }
 
