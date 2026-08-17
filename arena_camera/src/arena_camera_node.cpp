@@ -87,7 +87,7 @@ ArenaCameraNode::ArenaCameraNode()
   // others
   , it_(new image_transport::ImageTransport(nh_))
   , img_raw_pub_(it_->advertiseCamera("image_raw", 1))
-  , streaming_pub_(nh_.advertise<std_msgs::Bool>("streaming", 1, /*latch=*/true))
+  , streaming_pub_(nh_.advertise<std_msgs::Bool>("streaming", 1))
   , img_rect_pub_(nullptr)
   , grab_imgs_raw_as_(nh_, "grab_images_raw", boost::bind(&ArenaCameraNode::grabImagesRawActionExecuteCB, this, _1),
                       false)
@@ -898,21 +898,14 @@ void ArenaCameraNode::spin_freerunning()
   }
 }
 
-void ArenaCameraNode::publishStreamingState()
-{
-  // Mirrors the grab condition in spin_once(): true exactly while frames are
-  // being acquired for a pixel subscriber. camera_info-only subscribers are
-  // served republished messages without a grab, so they do not count.
-  std_msgs::Bool msg;
-  msg.data = !isSleeping() && (getNumSubscribersRaw() || getNumSubscribersRect());
-  streaming_pub_.publish(msg);
-}
-
 void ArenaCameraNode::spin_once(uint64_t trigger_at_ns)
 {
-  // Before any early return, so the reported state keeps tracking subscriber
-  // demand even while the device is disconnected and being reset.
-  publishStreamingState();
+  // Published before the early returns below, so a disconnected device keeps
+  // reporting that frames are expected.
+  const bool streaming = !isSleeping() && (getNumSubscribersRaw() || getNumSubscribersRect());
+  std_msgs::Bool streaming_msg;
+  streaming_msg.data = streaming;
+  streaming_pub_.publish(streaming_msg);
 
   if (camera_info_manager_->isCalibrated())
   {
@@ -941,7 +934,7 @@ void ArenaCameraNode::spin_once(uint64_t trigger_at_ns)
 
   if (!isSleeping() && (img_raw_pub_.getNumSubscribers() || getNumSubscribersRect()))
   {
-    if (getNumSubscribersRaw() || getNumSubscribersRect())
+    if (streaming)
     {
       if (!grabImage(trigger_at_ns))
       {

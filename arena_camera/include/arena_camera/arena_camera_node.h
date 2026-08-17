@@ -165,13 +165,6 @@ protected:
   uint32_t getNumSubscribersRect() const;
 
   /**
-  * Publishes on the latched ~streaming topic, every spin so a lost message
-  * heals at the next one: true exactly while frames are grabbed for a pixel
-  * subscriber.
-  */
-  void publishStreamingState();
-
-  /**
   * Grabs an image and stores the image in img_raw_msg_
   * @return false if an error occurred.
   */
@@ -407,8 +400,6 @@ protected:
   image_transport::ImageTransport* it_;
   image_transport::CameraPublisher img_raw_pub_;
 
-  // Published every spin; latched so a late subscriber gets the current state
-  // on connect rather than one spin period later.
   ros::Publisher streaming_pub_;
 
   ros::Publisher* img_rect_pub_;
