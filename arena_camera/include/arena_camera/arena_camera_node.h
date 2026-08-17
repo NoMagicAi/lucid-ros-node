@@ -320,6 +320,13 @@ protected:
   bool isSleeping();
 
   /**
+  * Returns true if frames are being grabbed. camera_info-only subscribers are
+  * served republished messages without a grab, so they do not count.
+  * @return true if grabbing frames
+  */
+  bool isStreaming();
+
+  /**
   * Generates the subset of points on which the brightness search will be
   * executed in order to speed it up. The subset are the indices of the
   * one-dimensional image_raw data vector. The base generation is done in a

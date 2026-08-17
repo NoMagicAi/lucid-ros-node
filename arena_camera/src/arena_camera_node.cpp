@@ -902,9 +902,8 @@ void ArenaCameraNode::spin_once(uint64_t trigger_at_ns)
 {
   // Published before the early returns below, so a disconnected device keeps
   // reporting that frames are expected.
-  const bool streaming = !isSleeping() && (getNumSubscribersRaw() || getNumSubscribersRect());
   std_msgs::Bool streaming_msg;
-  streaming_msg.data = streaming;
+  streaming_msg.data = isStreaming();
   streaming_pub_.publish(streaming_msg);
 
   if (camera_info_manager_->isCalibrated())
@@ -934,7 +933,7 @@ void ArenaCameraNode::spin_once(uint64_t trigger_at_ns)
 
   if (!isSleeping() && (img_raw_pub_.getNumSubscribers() || getNumSubscribersRect()))
   {
-    if (streaming)
+    if (isStreaming())
     {
       if (!grabImage(trigger_at_ns))
       {
@@ -2181,6 +2180,11 @@ bool ArenaCameraNode::setSleepingCallback(camera_control_msgs::SetSleeping::Requ
 bool ArenaCameraNode::isSleeping()
 {
   return is_sleeping_;
+}
+
+bool ArenaCameraNode::isStreaming()
+{
+  return !isSleeping() && (getNumSubscribersRaw() || getNumSubscribersRect());
 }
 
 ArenaCameraNode::~ArenaCameraNode()
