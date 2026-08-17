@@ -931,33 +931,30 @@ void ArenaCameraNode::spin_once(uint64_t trigger_at_ns)
     return;
   }
 
-  if (!isSleeping() && (img_raw_pub_.getNumSubscribers() || getNumSubscribersRect()))
+  if (isStreaming())
   {
-    if (isStreaming())
+    if (!grabImage(trigger_at_ns))
     {
-      if (!grabImage(trigger_at_ns))
-      {
-        ROS_INFO("did not get image");
-        return;
-      }
+      ROS_INFO("did not get image");
+      return;
     }
+  }
 
-    if (img_raw_pub_.getNumSubscribers() > 0)
-    {
-      sensor_msgs::CameraInfoPtr cam_info(new sensor_msgs::CameraInfo(camera_info_manager_->getCameraInfo()));
-      cam_info->header.stamp = img_raw_msg_.header.stamp;
-      img_raw_pub_.publish(img_raw_msg_, *cam_info);
-    }
+  if (img_raw_pub_.getNumSubscribers() > 0)
+  {
+    sensor_msgs::CameraInfoPtr cam_info(new sensor_msgs::CameraInfo(camera_info_manager_->getCameraInfo()));
+    cam_info->header.stamp = img_raw_msg_.header.stamp;
+    img_raw_pub_.publish(img_raw_msg_, *cam_info);
+  }
 
-    if (getNumSubscribersRect() > 0 && camera_info_manager_->isCalibrated())
-    {
-      cv_bridge_img_rect_->header.stamp = img_raw_msg_.header.stamp;
-      assert(pinhole_model_->initialized());
-      cv_bridge::CvImagePtr cv_img_raw = cv_bridge::toCvCopy(img_raw_msg_, img_raw_msg_.encoding);
-      pinhole_model_->fromCameraInfo(camera_info_manager_->getCameraInfo());
-      pinhole_model_->rectifyImage(cv_img_raw->image, cv_bridge_img_rect_->image);
-      img_rect_pub_->publish(*cv_bridge_img_rect_);
-    }
+  if (getNumSubscribersRect() > 0 && camera_info_manager_->isCalibrated())
+  {
+    cv_bridge_img_rect_->header.stamp = img_raw_msg_.header.stamp;
+    assert(pinhole_model_->initialized());
+    cv_bridge::CvImagePtr cv_img_raw = cv_bridge::toCvCopy(img_raw_msg_, img_raw_msg_.encoding);
+    pinhole_model_->fromCameraInfo(camera_info_manager_->getCameraInfo());
+    pinhole_model_->rectifyImage(cv_img_raw->image, cv_bridge_img_rect_->image);
+    img_rect_pub_->publish(*cv_bridge_img_rect_);
   }
 }
 
