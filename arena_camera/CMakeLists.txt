@@ -53,8 +53,9 @@ set(CATKIN_COMPONENTS
      image_transport
      roscpp
      roslint
-     roslaunch 
+     roslaunch
      sensor_msgs
+     std_msgs
 )
 
 ## Find catkin macros and libraries
