@@ -1,0 +1,4 @@
+string target_algorithm
+---
+string reached_algorithm
+bool success

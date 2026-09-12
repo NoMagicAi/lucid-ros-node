@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:support.thinklucid.com)",
+      "Bash(ls:*)"
+    ]
+  }
+}
